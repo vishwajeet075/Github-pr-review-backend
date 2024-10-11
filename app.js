@@ -12,7 +12,7 @@ app.use(session({
   secret: 'vishwa', // Use a secure secret in production
   resave: false,
   saveUninitialized: true,
-  cookie: { secure: false } // Set to true if using HTTPS
+  cookie: { secure: true } // Set to true if using HTTPS
 }));
 
 app.use(cors({
@@ -21,7 +21,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
 }));
-app.options('*', cors());
+
 app.use(express.json());
 
 
@@ -29,7 +29,7 @@ app.use(express.json());
 
 
 // GitHub OAuth endpoint
-app.post('/github-oauth',  cors(),async (req, res) => {
+app.post('/github-oauth', async (req, res) => {
   const { code } = req.body;
 
   try {
