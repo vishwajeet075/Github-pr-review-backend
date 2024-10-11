@@ -2,17 +2,29 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const { OpenAI } = require('openai');
-const session = require('express-session'); // Add session middleware
+const session = require('express-session');
+const MongoDBStore = require('connect-mongodb-session')(session);
 require('dotenv').config();
 
 const app = express();
 
-// Use session middleware
+// MongoDB session store setup
+const store = new MongoDBStore({
+  uri: process.env.MONGODB_URI,
+  collection: 'sessions', // Name of the collection to store sessions
+});
+
+store.on('error', (error) => {
+  console.error('Session store error:', error);
+});
+
+// Use session middleware with MongoDB store
 app.use(session({
-  secret: 'vishwa', // Use a secure secret in production
+  secret: 'vishwa', // Replace with a strong secret in production
   resave: false,
-  saveUninitialized: true,
-  cookie: { secure: true } // Set to true if using HTTPS
+  saveUninitialized: false,
+  store: store,
+  cookie: { secure: true } // Set to true if you’re using HTTPS
 }));
 
 app.use(cors({
@@ -23,10 +35,6 @@ app.use(cors({
 }));
 
 app.use(express.json());
-
-
-
-
 
 // GitHub OAuth endpoint
 app.post('/github-oauth', async (req, res) => {
@@ -61,13 +69,13 @@ app.post('/github-oauth', async (req, res) => {
 
 // Initialize OpenAI
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // Ensure your OpenAI API key is in the .env file
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 // GitHub webhook handler for pull request events
 app.post('/webhook', async (req, res) => {
   const { action, pull_request } = req.body;
-  
+
   if (!req.session.githubAccessToken) {
     res.status(401).json({ error: 'GitHub access token not found in session' });
     return;
@@ -89,7 +97,7 @@ app.post('/webhook', async (req, res) => {
         headers: { Authorization: `Bearer ${req.session.githubAccessToken}` },
       });
 
-      const changedFiles = filesResponse.data; // All changed files in the PR
+      const changedFiles = filesResponse.data;
 
       // Review the PR with AI
       const reviewResult = await reviewPRWithAI(changedFiles);
@@ -113,14 +121,13 @@ async function reviewPRWithAI(changedFiles) {
   );
 
   try {
-    // Generate AI feedback for each changed file
     const responses = await Promise.all(
       codeReviewPrompts.map(async (prompt) => {
         const completion = await openai.chat.completions.create({
           model: 'gpt-4',
           messages: [{ role: 'user', content: prompt }],
         });
-        return completion.choices[0].message.content.trim(); // Extract AI feedback
+        return completion.choices[0].message.content.trim();
       })
     );
 
@@ -150,7 +157,6 @@ async function postReviewComment(prData, reviewResult, accessToken) {
     console.error('Error posting review comment:', error.response ? error.response.data : error);
   }
 }
-
 
 app.post('/check-webhook', async (req, res) => {
   const { repoOwner, repoName, webhookUrl } = req.body;
