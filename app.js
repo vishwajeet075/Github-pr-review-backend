@@ -221,11 +221,51 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', mongoConnection: mongoose.connection.readyState });
 });
 
+
+
+app.post('/check-webhook', async (req, res) => {
+  const { repoOwner, repoName, webhookUrl } = req.body;
+  
+  if (!req.session.githubAccessToken) {
+    logger.error('GitHub access token not found in session');
+    return res.status(401).json({ error: 'GitHub access token not found in session' });
+  }
+
+  try {
+    const response = await axios.get(
+      `https://api.github.com/repos/${repoOwner}/${repoName}/hooks`,
+      {
+        headers: {
+          Authorization: `Bearer ${req.session.githubAccessToken}`,
+          Accept: 'application/vnd.github.v3+json'
+        }
+      }
+    );
+
+    const webhookExists = response.data.some(hook => hook.config.url === webhookUrl);
+    res.json({ webhookExists });
+  } catch (error) {
+    logger.error('Error checking existing webhooks:', error.response ? error.response.data : error);
+    res.status(error.response ? error.response.status : 500).json({ error: 'Error checking webhooks' });
+  }
+});
+
+
 // Start the server
 const PORT = process.env.PORT || 5050;
 app.listen(PORT, () => {
   logger.info(`Server started on port ${PORT}`);
 });
+
+
+app.use((req, res, next) => {
+  if (!req.session.githubAccessToken && req.headers.authorization) {
+    const token = req.headers.authorization.split(' ')[1];
+    req.session.githubAccessToken = token;
+  }
+  next();
+});
+
 
 // Error handling middleware
 app.use((err, req, res, next) => {
