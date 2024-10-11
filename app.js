@@ -4,31 +4,71 @@ const cors = require('cors');
 const { OpenAI } = require('openai');
 const session = require('express-session');
 const MongoDBStore = require('connect-mongodb-session')(session);
+const mongoose = require('mongoose');
 require('dotenv').config();
 
 const app = express();
 
+// Improved error logging
+const winston = require('winston');
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `${timestamp} ${level}: ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' }),
+  ],
+});
+
+// MongoDB connection
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => logger.info('MongoDB connected successfully'))
+.catch((err) => logger.error('MongoDB connection error:', err));
+
 // MongoDB session store setup
 const store = new MongoDBStore({
   uri: process.env.MONGODB_URI,
-  collection: 'sessions', // Name of the collection to store sessions
+  collection: 'sessions',
+  expires: 1000 * 60 * 60 * 24, // 24 hours
 });
 
 store.on('error', (error) => {
-  console.error('Session store error:', error);
+  logger.error('Session store error:', error);
+});
+
+// Middleware to check MongoDB connection before each request
+app.use((req, res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    logger.error('MongoDB is not connected');
+    return res.status(500).json({ error: 'Database connection error' });
+  }
+  next();
 });
 
 // Use session middleware with MongoDB store
 app.use(session({
-  secret: 'vishwa', // Replace with a strong secret in production
+  secret: process.env.SESSION_SECRET || 'a-very-long-and-random-secret-key',
   resave: false,
   saveUninitialized: false,
   store: store,
-  cookie: { secure: true } // Set to true if you’re using HTTPS
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 1000 * 60 * 60 * 24 // 24 hours
+  }
 }));
 
+// CORS configuration
 app.use(cors({
-  origin: 'https://github-pr-review.netlify.app', // Replace with your frontend URL
+  origin: process.env.FRONTEND_URL || 'https://github-pr-review.netlify.app',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
@@ -40,12 +80,16 @@ app.use(express.json());
 app.post('/github-oauth', async (req, res) => {
   const { code } = req.body;
 
+  if (!code) {
+    return res.status(400).json({ error: 'GitHub code is required' });
+  }
+
   try {
     const response = await axios.post(
       'https://github.com/login/oauth/access_token',
       {
-        client_id: process.env.REACT_APP_GITHUB_CLIENT_ID,
-        client_secret: process.env.REACT_APP_GITHUB_CLIENT_SECRET,
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
         code,
       },
       {
@@ -57,12 +101,25 @@ app.post('/github-oauth', async (req, res) => {
 
     const accessToken = response.data.access_token;
 
+    if (!accessToken) {
+      logger.error('No access token received from GitHub');
+      return res.status(400).json({ error: 'Failed to obtain access token' });
+    }
+
     // Store the token in the session
     req.session.githubAccessToken = accessToken;
-
-    res.json({ access_token: accessToken });
+    
+    // Save session explicitly
+    req.session.save((err) => {
+      if (err) {
+        logger.error('Error saving session:', err);
+        return res.status(500).json({ error: 'Error saving session' });
+      }
+      logger.info('GitHub access token stored in session');
+      res.json({ access_token: accessToken });
+    });
   } catch (error) {
-    console.error('Error fetching GitHub token:', error);
+    logger.error('Error fetching GitHub token:', error);
     res.status(500).json({ error: 'Error fetching GitHub token' });
   }
 });
@@ -77,8 +134,8 @@ app.post('/webhook', async (req, res) => {
   const { action, pull_request } = req.body;
 
   if (!req.session.githubAccessToken) {
-    res.status(401).json({ error: 'GitHub access token not found in session' });
-    return;
+    logger.error('GitHub access token not found in session');
+    return res.status(401).json({ error: 'GitHub access token not found in session' });
   }
 
   if (action === 'opened') {
@@ -91,7 +148,6 @@ app.post('/webhook', async (req, res) => {
       changedFiles: pull_request.changed_files,
     };
 
-    // Fetching changed files
     try {
       const filesResponse = await axios.get(`${pull_request.url}/files`, {
         headers: { Authorization: `Bearer ${req.session.githubAccessToken}` },
@@ -104,14 +160,15 @@ app.post('/webhook', async (req, res) => {
 
       // Post the AI's feedback as a comment on the PR
       await postReviewComment(prData, reviewResult, req.session.githubAccessToken);
-    } catch (error) {
-      console.error('Error fetching PR files:', error.response ? error.response.data : error);
-      res.status(500).json({ error: 'Error fetching PR files' });
-      return;
-    }
-  }
 
-  res.status(200).send('Webhook received');
+      res.status(200).json({ message: 'PR reviewed successfully' });
+    } catch (error) {
+      logger.error('Error processing webhook:', error);
+      res.status(500).json({ error: 'Error processing webhook' });
+    }
+  } else {
+    res.status(200).json({ message: 'Webhook received, no action taken' });
+  }
 });
 
 // Function to interact with OpenAI API
@@ -133,7 +190,7 @@ async function reviewPRWithAI(changedFiles) {
 
     return responses;
   } catch (error) {
-    console.error('Error communicating with OpenAI:', error);
+    logger.error('Error communicating with OpenAI:', error);
     throw error;
   }
 }
@@ -152,38 +209,26 @@ async function postReviewComment(prData, reviewResult, accessToken) {
         headers: { Authorization: `Bearer ${accessToken}` },
       }
     );
-    console.log('Review comment posted successfully.');
+    logger.info('Review comment posted successfully.');
   } catch (error) {
-    console.error('Error posting review comment:', error.response ? error.response.data : error);
+    logger.error('Error posting review comment:', error);
+    throw error;
   }
 }
 
-app.post('/check-webhook', async (req, res) => {
-  const { repoOwner, repoName, webhookUrl } = req.body;
-  const token = req.session.githubAccessToken;
-
-  if (!token) {
-    return res.status(401).json({ error: 'GitHub access token not found in session' });
-  }
-
-  try {
-    const response = await axios.get(
-      `https://api.github.com/repos/${repoOwner}/${repoName}/hooks`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github.v3+json'
-        }
-      }
-    );
-
-    const webhookExists = response.data.some(hook => hook.config.url === webhookUrl);
-    res.json({ webhookExists });
-  } catch (error) {
-    console.error('Error checking existing webhooks:', error.response ? error.response.data : error);
-    res.status(500).json({ error: 'Error checking webhooks' });
-  }
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', mongoConnection: mongoose.connection.readyState });
 });
 
+// Start the server
 const PORT = process.env.PORT || 5050;
-app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
+app.listen(PORT, () => {
+  logger.info(`Server started on port ${PORT}`);
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  logger.error('Unhandled error:', err);
+  res.status(500).json({ error: 'An unexpected error occurred' });
+});
