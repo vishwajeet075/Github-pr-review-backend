@@ -226,10 +226,10 @@ app.get('/health', (req, res) => {
 app.post('/check-webhook', async (req, res) => {
   const { repoOwner, repoName, webhookUrl } = req.body;
   
-  if (!req.session.githubAccessToken) {
+ /* if (!req.session.githubAccessToken) {
     logger.error('GitHub access token not found in session');
     return res.status(401).json({ error: 'GitHub access token not found in session' });
-  }
+  }*/
 
   try {
     const response = await axios.get(
@@ -258,14 +258,14 @@ app.listen(PORT, () => {
 });
 
 
-app.use((req, res, next) => {
+/*app.use((req, res, next) => {
   if (!req.session.githubAccessToken && req.headers.authorization) {
     const token = req.headers.authorization.split(' ')[1];
     req.session.githubAccessToken = token;
   }
   next();
 });
-
+*/
 
 // Error handling middleware
 app.use((err, req, res, next) => {
