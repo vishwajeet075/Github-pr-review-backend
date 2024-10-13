@@ -3,7 +3,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const crypto = require('crypto');
-const { Configuration, OpenAIApi } = require("openai");
+const OpenAI = require('openai');
 
 require('dotenv').config();
 
@@ -11,10 +11,9 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const configuration = new Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAIApi(configuration);
 
 let githubToken = null;
 
@@ -94,13 +93,16 @@ app.post('/webhook', async (req, res) => {
         headers: { Authorization: `token ${githubToken}` },
       });
 
-      const aiResponse = await openai.createCompletion({
-        model: "text-davinci-002",
-        prompt: `Review the following code changes and provide a concise summary of the changes and any potential issues:\n\n${prDiff.data}`,
+      const aiResponse = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+          { role: "system", content: "You are a helpful code reviewer." },
+          { role: "user", content: `Review the following code changes and provide a concise summary of the changes and any potential issues:\n\n${prDiff.data}` }
+        ],
         max_tokens: 300,
       });
 
-      const reviewComment = aiResponse.data.choices[0].text.trim();
+      const reviewComment = aiResponse.choices[0].message.content.trim();
 
       await axios.post(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
         body: `AI Review:\n\n${reviewComment}`,
