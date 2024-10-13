@@ -3,7 +3,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const crypto = require('crypto');
-const OpenAI = require('openai');
+
 
 require('dotenv').config();
 
@@ -11,9 +11,6 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 let githubToken = null;
 
@@ -93,17 +90,36 @@ app.post('/webhook', async (req, res) => {
         headers: { Authorization: `token ${githubToken}` },
       });
 
-      const aiResponse = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          { role: "system", content: "You are a helpful code reviewer." },
-          { role: "user", content: `Review the following code changes and provide a concise summary of the changes and any potential issues:\n\n${prDiff.data}` }
-        ],
-        max_tokens: 300,
+      // Hugging Face Inference API call
+      const aiResponse = await axios.post(
+        'https://api-inference.huggingface.co/models/microsoft/codebert-base',
+        {
+          inputs: `Review the following code changes and provide a concise summary of the changes, any potential issues, and suggest a title for the pull request:\n\n${prDiff.data}`,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const reviewComment = aiResponse.data[0].generated_text.trim();
+
+      // Extract title and description from the AI response
+      const lines = reviewComment.split('\n');
+      const prTitle = lines[0].startsWith('Title:') ? lines[0].slice(6).trim() : 'AI-Suggested PR Title';
+      const prDescription = lines.slice(1).join('\n').trim();
+
+      // Update PR title and description
+      await axios.patch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
+        title: prTitle,
+        body: prDescription,
+      }, {
+        headers: { Authorization: `token ${githubToken}` },
       });
 
-      const reviewComment = aiResponse.choices[0].message.content.trim();
-
+      // Post a comment with the full AI review
       await axios.post(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
         body: `AI Review:\n\n${reviewComment}`,
       }, {
