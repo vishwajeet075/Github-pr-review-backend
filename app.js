@@ -14,6 +14,24 @@ app.use(bodyParser.json());
 
 let githubToken = null;
 
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY = 5000; // 5 seconds
+
+async function retryableRequest(config, retries = MAX_RETRIES, delay = INITIAL_RETRY_DELAY) {
+  try {
+    const response = await axios(config);
+    return response;
+  } catch (error) {
+    if (retries > 0 && error.response && error.response.status === 503) {
+      console.log(`Request failed. Retrying in ${delay / 1000} seconds...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return retryableRequest(config, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+}
+
+
 app.post('/github-oauth', async (req, res) => {
   const { code } = req.body;
 
@@ -90,19 +108,18 @@ app.post('/webhook', async (req, res) => {
         headers: { Authorization: `token ${githubToken}` },
       });
 
-      // Hugging Face Inference API call
-      const aiResponse = await axios.post(
-        'https://api-inference.huggingface.co/models/microsoft/codebert-base',
-        {
+      // Hugging Face Inference API call with retry mechanism
+      const aiResponse = await retryableRequest({
+        method: 'post',
+        url: 'https://api-inference.huggingface.co/models/microsoft/codebert-base',
+        headers: {
+          Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        data: {
           inputs: `Review the following code changes and provide a concise summary of the changes, any potential issues, and suggest a title for the pull request:\n\n${prDiff.data}`,
         },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+      });
 
       const reviewComment = aiResponse.data[0].generated_text.trim();
 
