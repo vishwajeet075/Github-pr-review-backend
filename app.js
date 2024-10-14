@@ -109,10 +109,13 @@ app.post('/webhook', async (req, res) => {
         headers: { Authorization: `token ${githubToken}` },
       });
 
+      // Process the diff to make it more readable
+      const processedDiff = processDiff(prDiff.data);
+
       // Prepare a more detailed and specific prompt for the Hugging Face model
       const aiPrompt = `As an expert code reviewer, analyze the following code changes and provide a detailed, specific review:
 
-${prDiff.data}
+${processedDiff}
 
 Provide your review in the following format:
 1. Summary: Brief overview of main changes (2-3 sentences).
@@ -136,7 +139,7 @@ Provide your review in the following format:
 
 Be as specific as possible, always referencing exact line numbers, function names, or code snippets in your review.`;
 
-      // Hugging Face API call with a different model
+      // Hugging Face API call
       const aiResponse = await retryableRequest({
         method: 'post',
         url: 'https://api-inference.huggingface.co/models/bigcode/starcoder',
@@ -202,6 +205,35 @@ Be as specific as possible, always referencing exact line numbers, function name
     res.json({ success: true, message: 'Event ignored' });
   }
 });
+
+function processDiff(diff) {
+  // Split the diff into separate file diffs
+  const fileDiffs = diff.split('diff --git');
+
+  // Process each file diff
+  const processedDiffs = fileDiffs.map(fileDiff => {
+    if (!fileDiff.trim()) return ''; // Skip empty diffs
+
+    // Extract file name
+    const fileNameMatch = fileDiff.match(/a\/(.+) b\/(.+)/);
+    const fileName = fileNameMatch ? fileNameMatch[2] : 'Unknown file';
+
+    // Remove index and file mode lines
+    const cleanedDiff = fileDiff.replace(/index .+\n/, '').replace(/new file mode .+\n/, '');
+
+    // Format the diff
+    const formattedDiff = cleanedDiff.split('\n').map(line => {
+      if (line.startsWith('+')) return `+ ${line.slice(1)}`;
+      if (line.startsWith('-')) return `- ${line.slice(1)}`;
+      return `  ${line}`;
+    }).join('\n');
+
+    return `File: ${fileName}\n${formattedDiff}\n`;
+  });
+
+  return processedDiffs.join('\n');
+}
+
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
