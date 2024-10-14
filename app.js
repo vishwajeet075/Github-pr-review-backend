@@ -108,29 +108,42 @@ app.post('/webhook', async (req, res) => {
         headers: { Authorization: `token ${githubToken}` },
       });
 
-      // Hugging Face Inference API call with retry mechanism
+      // Prepare the prompt for the CodeReviewer model
+      const aiPrompt = `Review the following code changes and provide feedback:
+
+${prDiff.data}
+
+Please provide:
+1. A brief summary of the changes
+2. Any potential issues or improvements
+3. A suggested title for the pull request`;
+
+      // CodeReviewer model API call
       const aiResponse = await retryableRequest({
         method: 'post',
-        url: 'https://api-inference.huggingface.co/models/facebook/bart-large-cnn',
+        url: 'https://api-inference.huggingface.co/models/microsoft/codereviewer',
         headers: {
           Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
           'Content-Type': 'application/json',
         },
         data: {
-          inputs: `Summarize the following code changes and provide a review:\n\n${prDiff.data}`,
+          inputs: aiPrompt,
         },
       });
 
       let reviewComment = '';
-      if (aiResponse.data && aiResponse.data[0] && aiResponse.data[0].summary_text) {
-        reviewComment = aiResponse.data[0].summary_text.trim();
+      if (aiResponse.data && aiResponse.data[0] && aiResponse.data[0].generated_text) {
+        reviewComment = aiResponse.data[0].generated_text.trim();
       } else {
         console.error('Unexpected AI response format:', aiResponse.data);
         reviewComment = 'Unable to generate AI review at this time.';
       }
 
-      // Generate a simple title based on the first line of the review
-      const prTitle = `AI Review: ${reviewComment.split('\n')[0].slice(0, 50)}...`;
+      // Extract title from the AI response (assuming it's the last line)
+      const lines = reviewComment.split('\n');
+      const prTitle = lines[lines.length - 1].startsWith('Title:') 
+        ? lines[lines.length - 1].slice(6).trim() 
+        : 'AI Review: Code Changes';
 
       // Update PR title and description
       await axios.patch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
@@ -142,7 +155,7 @@ app.post('/webhook', async (req, res) => {
 
       // Post a comment with the full AI review
       await axios.post(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
-        body: `AI Review:\n\n${reviewComment}`,
+        body: `AI Code Review:\n\n${reviewComment}`,
       }, {
         headers: { Authorization: `token ${githubToken}` },
       });
