@@ -3,7 +3,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const crypto = require('crypto');
-const openai = require('openai');
+
 
 
 require('dotenv').config();
@@ -109,30 +109,49 @@ app.post('/webhook', async (req, res) => {
         headers: { Authorization: `token ${githubToken}` },
       });
 
-      // Prepare a more detailed prompt for the CodeReviewer model
-      const aiPrompt = `As an experienced code reviewer, please analyze the following code changes and provide a detailed review:
+      // Prepare a more detailed and specific prompt for the Hugging Face model
+      const aiPrompt = `As an expert code reviewer, analyze the following code changes and provide a detailed, specific review:
 
 ${prDiff.data}
 
-Please structure your review as follows:
-1. Summary: Provide a brief overview of the main changes (2-3 sentences).
-2. Details: List the specific files changed and describe the modifications.
-3. Issues: Identify any potential problems, bugs, or areas for improvement.
-4. Suggestions: Offer constructive feedback on how to enhance the code.
-5. Title: Suggest a concise and descriptive title for this pull request (start with "Title: ").
+Provide your review in the following format:
+1. Summary: Brief overview of main changes (2-3 sentences).
+2. Detailed Analysis:
+   - For each file changed, list modifications with line numbers.
+   - Identify potential issues, bugs, or improvements for specific code sections.
+   - Suggest optimizations or best practices for the changed code.
+3. Code Quality:
+   - Comment on code readability, maintainability, and adherence to coding standards.
+   - Highlight any code smells or anti-patterns.
+4. Security and Performance:
+   - Point out any security vulnerabilities or performance bottlenecks.
+   - Recommend improvements for security and efficiency.
+5. Testing:
+   - Suggest unit tests or integration tests for the changes.
+6. Documentation:
+   - Recommend any necessary updates to documentation or comments.
+7. Overall Recommendation:
+   - Approve, request changes, or suggest further discussion.
+8. Title: Suggest a concise and descriptive title for this pull request (start with "Title: ").
 
-Be specific in your review, mentioning line numbers or function names where applicable.`;
+Be as specific as possible, always referencing exact line numbers, function names, or code snippets in your review.`;
 
-   /*   // CodeReviewer model API call
+      // Hugging Face API call with a different model
       const aiResponse = await retryableRequest({
         method: 'post',
-        url: 'https://api-inference.huggingface.co/models/microsoft/codereviewer',
+        url: 'https://api-inference.huggingface.co/models/bigcode/starcoder',
         headers: {
           Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
           'Content-Type': 'application/json',
         },
         data: {
           inputs: aiPrompt,
+          parameters: {
+            max_new_tokens: 1000,
+            temperature: 0.7,
+            top_p: 0.95,
+            do_sample: true,
+          },
         },
       });
 
@@ -151,48 +170,13 @@ Be specific in your review, mentioning line numbers or function names where appl
         }
 
         // If the review is too short or generic, append a note
-        if (reviewComment.split('\n').length < 3 || reviewComment.length < 100) {
+        if (reviewComment.split('\n').length < 10 || reviewComment.length < 500) {
           reviewComment += "\n\nNote: This AI-generated review may be incomplete. Please review the changes manually as well.";
         }
       } else {
         console.error('Unexpected AI response format:', aiResponse.data);
         reviewComment = 'Unable to generate a detailed AI review at this time. Please review the changes manually.';
-      }*/
-
-
-       // OpenAI API call
-       const openaiClient = new openai.OpenAI(process.env.OPENAI_API_KEY);
-       const aiResponse = await openaiClient.chat.completions.create({
-         model: "gpt-3.5-turbo",
-         messages: [
-           { role: "system", content: "You are a helpful code review assistant." },
-           { role: "user", content: aiPrompt }
-         ],
-         max_tokens: 1000
-       });
- 
-       let reviewComment = '';
-       let prTitle = 'AI Review: Code Changes';
- 
-       if (aiResponse.choices && aiResponse.choices[0] && aiResponse.choices[0].message) {
-         reviewComment = aiResponse.choices[0].message.content.trim();
-         
-         // Extract title from the AI response
-         const titleMatch = reviewComment.match(/Title: (.+)/);
-         if (titleMatch) {
-           prTitle = titleMatch[1].trim();
-           // Remove the title line from the review comment
-           reviewComment = reviewComment.replace(/Title: .+\n?/, '');
-         }
- 
-         // If the review is too short or generic, append a note
-         if (reviewComment.split('\n').length < 3 || reviewComment.length < 100) {
-           reviewComment += "\n\nNote: This AI-generated review may be incomplete. Please review the changes manually as well.";
-         }
-       } else {
-         console.error('Unexpected AI response format:', aiResponse);
-         reviewComment = 'Unable to generate a detailed AI review at this time. Please review the changes manually.';
-       }
+      }
 
       // Update PR title and description
       await axios.patch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
