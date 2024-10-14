@@ -108,15 +108,19 @@ app.post('/webhook', async (req, res) => {
         headers: { Authorization: `token ${githubToken}` },
       });
 
-      // Prepare the prompt for the CodeReviewer model
-      const aiPrompt = `Review the following code changes and provide feedback:
+      // Prepare a more detailed prompt for the CodeReviewer model
+      const aiPrompt = `As an experienced code reviewer, please analyze the following code changes and provide a detailed review:
 
 ${prDiff.data}
 
-Please provide:
-1. A brief summary of the changes
-2. Any potential issues or improvements
-3. A suggested title for the pull request`;
+Please structure your review as follows:
+1. Summary: Provide a brief overview of the main changes (2-3 sentences).
+2. Details: List the specific files changed and describe the modifications.
+3. Issues: Identify any potential problems, bugs, or areas for improvement.
+4. Suggestions: Offer constructive feedback on how to enhance the code.
+5. Title: Suggest a concise and descriptive title for this pull request (start with "Title: ").
+
+Be specific in your review, mentioning line numbers or function names where applicable.`;
 
       // CodeReviewer model API call
       const aiResponse = await retryableRequest({
@@ -132,18 +136,27 @@ Please provide:
       });
 
       let reviewComment = '';
+      let prTitle = 'AI Review: Code Changes';
+
       if (aiResponse.data && aiResponse.data[0] && aiResponse.data[0].generated_text) {
         reviewComment = aiResponse.data[0].generated_text.trim();
+        
+        // Extract title from the AI response
+        const titleMatch = reviewComment.match(/Title: (.+)/);
+        if (titleMatch) {
+          prTitle = titleMatch[1].trim();
+          // Remove the title line from the review comment
+          reviewComment = reviewComment.replace(/Title: .+\n?/, '');
+        }
+
+        // If the review is too short or generic, append a note
+        if (reviewComment.split('\n').length < 3 || reviewComment.length < 100) {
+          reviewComment += "\n\nNote: This AI-generated review may be incomplete. Please review the changes manually as well.";
+        }
       } else {
         console.error('Unexpected AI response format:', aiResponse.data);
-        reviewComment = 'Unable to generate AI review at this time.';
+        reviewComment = 'Unable to generate a detailed AI review at this time. Please review the changes manually.';
       }
-
-      // Extract title from the AI response (assuming it's the last line)
-      const lines = reviewComment.split('\n');
-      const prTitle = lines[lines.length - 1].startsWith('Title:') 
-        ? lines[lines.length - 1].slice(6).trim() 
-        : 'AI Review: Code Changes';
 
       // Update PR title and description
       await axios.patch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
