@@ -3,6 +3,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const crypto = require('crypto');
+const openai = require('openai');
 
 
 require('dotenv').config();
@@ -122,7 +123,7 @@ Please structure your review as follows:
 
 Be specific in your review, mentioning line numbers or function names where applicable.`;
 
-      // CodeReviewer model API call
+   /*   // CodeReviewer model API call
       const aiResponse = await retryableRequest({
         method: 'post',
         url: 'https://api-inference.huggingface.co/models/microsoft/codereviewer',
@@ -156,7 +157,42 @@ Be specific in your review, mentioning line numbers or function names where appl
       } else {
         console.error('Unexpected AI response format:', aiResponse.data);
         reviewComment = 'Unable to generate a detailed AI review at this time. Please review the changes manually.';
-      }
+      }*/
+
+
+       // OpenAI API call
+       const openaiClient = new openai.OpenAI(process.env.OPENAI_API_KEY);
+       const aiResponse = await openaiClient.chat.completions.create({
+         model: "gpt-3.5-turbo",
+         messages: [
+           { role: "system", content: "You are a helpful code review assistant." },
+           { role: "user", content: aiPrompt }
+         ],
+         max_tokens: 1000
+       });
+ 
+       let reviewComment = '';
+       let prTitle = 'AI Review: Code Changes';
+ 
+       if (aiResponse.choices && aiResponse.choices[0] && aiResponse.choices[0].message) {
+         reviewComment = aiResponse.choices[0].message.content.trim();
+         
+         // Extract title from the AI response
+         const titleMatch = reviewComment.match(/Title: (.+)/);
+         if (titleMatch) {
+           prTitle = titleMatch[1].trim();
+           // Remove the title line from the review comment
+           reviewComment = reviewComment.replace(/Title: .+\n?/, '');
+         }
+ 
+         // If the review is too short or generic, append a note
+         if (reviewComment.split('\n').length < 3 || reviewComment.length < 100) {
+           reviewComment += "\n\nNote: This AI-generated review may be incomplete. Please review the changes manually as well.";
+         }
+       } else {
+         console.error('Unexpected AI response format:', aiResponse);
+         reviewComment = 'Unable to generate a detailed AI review at this time. Please review the changes manually.';
+       }
 
       // Update PR title and description
       await axios.patch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
