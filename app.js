@@ -112,32 +112,18 @@ app.post('/webhook', async (req, res) => {
       // Process the diff to make it more readable
       const processedDiff = processDiff(prDiff.data);
 
-      // Prepare a more detailed and specific prompt for the Hugging Face model
-      const aiPrompt = `As an expert code reviewer, analyze the following code changes and provide a detailed, specific review:
+      const aiPrompt = `You are an expert code reviewer. Review the following code changes and provide a brief, focused review:
 
-${processedDiff}
-
-Provide your review in the following format:
-1. Summary: Brief overview of main changes (2-3 sentences).
-2. Detailed Analysis:
-   - For each file changed, list modifications with line numbers.
-   - Identify potential issues, bugs, or improvements for specific code sections.
-   - Suggest optimizations or best practices for the changed code.
-3. Code Quality:
-   - Comment on code readability, maintainability, and adherence to coding standards.
-   - Highlight any code smells or anti-patterns.
-4. Security and Performance:
-   - Point out any security vulnerabilities or performance bottlenecks.
-   - Recommend improvements for security and efficiency.
-5. Testing:
-   - Suggest unit tests or integration tests for the changes.
-6. Documentation:
-   - Recommend any necessary updates to documentation or comments.
-7. Overall Recommendation:
-   - Approve, request changes, or suggest further discussion.
-8. Title: Suggest a concise and descriptive title for this pull request (start with "Title: ").
-
-Be as specific as possible, always referencing exact line numbers, function names, or code snippets in your review.`;
+      CODE CHANGES:
+      ${processedDiff}
+      
+      INSTRUCTIONS:
+      Provide a brief review (3-4 lines) that includes:
+      1. A summary of the main changes.
+      2. Any potential issues or improvements.
+      3. An overall recommendation (approve, request changes, or need discussion).
+      
+      Your review should be concise and focus only on the most important aspects of the code changes.`;
 
       // Hugging Face API call
       const aiResponse = await retryableRequest({
