@@ -111,27 +111,31 @@ app.post('/webhook', async (req, res) => {
       // Hugging Face Inference API call with retry mechanism
       const aiResponse = await retryableRequest({
         method: 'post',
-        url: 'https://api-inference.huggingface.co/models/microsoft/codebert-base',
+        url: 'https://api-inference.huggingface.co/models/facebook/bart-large-cnn',
         headers: {
           Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
           'Content-Type': 'application/json',
         },
         data: {
-          inputs: `Review the following code changes and provide a concise summary of the changes, any potential issues, and suggest a title for the pull request:\n\n${prDiff.data}`,
+          inputs: `Summarize the following code changes and provide a review:\n\n${prDiff.data}`,
         },
       });
 
-      const reviewComment = aiResponse.data[0].generated_text.trim();
+      let reviewComment = '';
+      if (aiResponse.data && aiResponse.data[0] && aiResponse.data[0].summary_text) {
+        reviewComment = aiResponse.data[0].summary_text.trim();
+      } else {
+        console.error('Unexpected AI response format:', aiResponse.data);
+        reviewComment = 'Unable to generate AI review at this time.';
+      }
 
-      // Extract title and description from the AI response
-      const lines = reviewComment.split('\n');
-      const prTitle = lines[0].startsWith('Title:') ? lines[0].slice(6).trim() : 'AI-Suggested PR Title';
-      const prDescription = lines.slice(1).join('\n').trim();
+      // Generate a simple title based on the first line of the review
+      const prTitle = `AI Review: ${reviewComment.split('\n')[0].slice(0, 50)}...`;
 
       // Update PR title and description
       await axios.patch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
         title: prTitle,
-        body: prDescription,
+        body: reviewComment,
       }, {
         headers: { Authorization: `token ${githubToken}` },
       });
