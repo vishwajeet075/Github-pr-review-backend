@@ -28,6 +28,14 @@ async function retryableRequest(config, retries = MAX_RETRIES, delay = INITIAL_R
   }
 }
 
+function truncateInput(input, maxTokens = 500) {
+  const tokens = input.split(/\s+/); // Split input into tokens (words)
+  if (tokens.length > maxTokens) {
+    return tokens.slice(0, maxTokens).join(' '); // Truncate to maxTokens
+  }
+  return input; // Return original input if within limit
+}
+
 app.post('/github-oauth', async (req, res) => {
   const { code } = req.body;
 
@@ -144,9 +152,12 @@ app.post('/webhook', async (req, res) => {
     const repo = req.body.repository.name;
 
     try {
-      const prResponse = await axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
-        headers: { Authorization: `token ${githubToken}` },
-      });
+      const prResponse = await axios.get(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`,
+        {
+          headers: { Authorization: `token ${githubToken}` },
+        }
+      );
 
       const prDiff = await axios.get(prResponse.data.diff_url, {
         headers: { Authorization: `token ${githubToken}` },
@@ -155,10 +166,13 @@ app.post('/webhook', async (req, res) => {
       // Process the diff to make it more readable
       const processedDiff = processDiff(prDiff.data);
 
+      // Truncate the input to fit within the model's token limit
+      const truncatedDiff = truncateInput(processedDiff, 500);
+
       const aiPrompt = `You are an expert code reviewer. Review the following code changes and provide a brief, focused review:
 
       CODE CHANGES:
-      ${processedDiff}
+      ${truncatedDiff}
       
       INSTRUCTIONS:
       Provide a brief review (3-4 lines) that includes:
@@ -211,24 +225,43 @@ app.post('/webhook', async (req, res) => {
       }
 
       // Update PR title and description
-      await axios.patch(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, {
-        title: prTitle,
-        body: reviewComment,
-      }, {
-        headers: { Authorization: `token ${githubToken}` },
-      });
+      await axios.patch(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`,
+        {
+          title: prTitle,
+          body: reviewComment,
+        },
+        {
+          headers: { Authorization: `token ${githubToken}` },
+        }
+      );
 
       // Post a comment with the full AI review
-      await axios.post(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
-        body: `AI Code Review:\n\n${reviewComment}`,
-      }, {
-        headers: { Authorization: `token ${githubToken}` },
-      });
+      await axios.post(
+        `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
+        {
+          body: `AI Code Review:\n\n${reviewComment}`,
+        },
+        {
+          headers: { Authorization: `token ${githubToken}` },
+        }
+      );
 
       res.json({ success: true });
     } catch (error) {
-      console.error('Error processing webhook:', error);
-      res.status(500).json({ success: false, error: 'Failed to process webhook' });
+      console.error('Error processing webhook:', error.response ? error.response.data : error.message);
+
+      if (error.response) {
+        // Log Hugging Face API error details
+        console.error('Hugging Face API error:', error.response.data);
+        res.status(error.response.status).json({
+          success: false,
+          error: 'Failed to process webhook',
+          details: error.response.data,
+        });
+      } else {
+        res.status(500).json({ success: false, error: 'Failed to process webhook' });
+      }
     }
   } else {
     res.json({ success: true, message: 'Event ignored' });
