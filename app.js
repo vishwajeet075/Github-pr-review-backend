@@ -3,15 +3,11 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const crypto = require('crypto');
-
-
-
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
-
 
 let githubToken = null;
 
@@ -31,7 +27,6 @@ async function retryableRequest(config, retries = MAX_RETRIES, delay = INITIAL_R
     throw error;
   }
 }
-
 
 app.post('/github-oauth', async (req, res) => {
   const { code } = req.body;
@@ -128,7 +123,7 @@ app.post('/webhook', async (req, res) => {
       // Hugging Face API call
       const aiResponse = await retryableRequest({
         method: 'post',
-        url: 'https://api-inference.huggingface.co/models/bigcode/starcoder',
+        url: 'https://api-inference.huggingface.co/models/microsoft/codebert-base',
         headers: {
           Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
           'Content-Type': 'application/json',
@@ -219,7 +214,6 @@ function processDiff(diff) {
 
   return processedDiffs.join('\n');
 }
-
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
