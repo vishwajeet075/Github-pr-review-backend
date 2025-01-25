@@ -53,26 +53,51 @@ app.post('/github-oauth', async (req, res) => {
 app.post('/create-webhook', async (req, res) => {
   const { owner, repo } = req.body;
 
+  // Validate input
+  if (!owner || !repo) {
+    return res.status(400).json({ success: false, error: 'Owner and repo name are required' });
+  }
+
   try {
-    await axios.post(`https://api.github.com/repos/${owner}/${repo}/hooks`, {
+    const webhookPayload = {
       name: 'web',
       active: true,
       events: ['pull_request'],
       config: {
         url: 'https://github-pr-review-backend.onrender.com/webhook',
         content_type: 'json',
-        secret: process.env.WEBHOOK_SECRET,
+        secret: process.env.WEBHOOK_SECRET || 'vishwa', // Use environment variable for secret
+        insecure_ssl: '0', // Set to "1" if using self-signed certificates
       },
-    }, {
-      headers: {
-        Authorization: `token ${githubToken}`,
-      },
-    });
+    };
 
-    res.json({ success: true });
+    const response = await axios.post(
+      `https://api.github.com/repos/${owner}/${repo}/hooks`,
+      webhookPayload,
+      {
+        headers: {
+          Authorization: `token ${githubToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    console.log('Webhook created successfully:', response.data);
+    res.json({ success: true, data: response.data });
   } catch (error) {
-    console.error('Error creating webhook:', error);
-    res.status(500).json({ success: false, error: 'Failed to create webhook' });
+    console.error('Error creating webhook:', error.response ? error.response.data : error.message);
+
+    if (error.response) {
+      // Log GitHub API error details
+      console.error('GitHub API error:', error.response.data);
+      res.status(error.response.status).json({
+        success: false,
+        error: 'Failed to create webhook',
+        details: error.response.data,
+      });
+    } else {
+      res.status(500).json({ success: false, error: 'Failed to create webhook' });
+    }
   }
 });
 
