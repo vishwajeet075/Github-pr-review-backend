@@ -59,12 +59,35 @@ app.post('/create-webhook', async (req, res) => {
   }
 
   try {
+    // Step 1: Check if a webhook already exists for this repository
+    const existingWebhooks = await axios.get(
+      `https://api.github.com/repos/${owner}/${repo}/hooks`,
+      {
+        headers: {
+          Authorization: `token ${githubToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    // Check if a webhook with the same URL already exists
+    const webhookUrl = 'https://github-pr-review-backend.onrender.com/webhook';
+    const existingHook = existingWebhooks.data.find(
+      (hook) => hook.config.url === webhookUrl
+    );
+
+    if (existingHook) {
+      console.log('Webhook already exists:', existingHook);
+      return res.json({ success: true, message: 'Webhook already exists', data: existingHook });
+    }
+
+    // Step 2: Create a new webhook if it doesn't exist
     const webhookPayload = {
       name: 'web',
       active: true,
       events: ['pull_request'],
       config: {
-        url: 'https://github-pr-review-backend.onrender.com/webhook',
+        url: webhookUrl,
         content_type: 'json',
         secret: process.env.WEBHOOK_SECRET || 'vishwa', // Use environment variable for secret
         insecure_ssl: '0', // Set to "1" if using self-signed certificates
